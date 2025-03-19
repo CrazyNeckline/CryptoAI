@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CryptoAI QA</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body>
+    <div class="nav-header">
+        <a href="/">Dashboard</a>
+        <a href="/history">History</a>
+        <a href="/qa" class="active">QA</a>
+    </div>
+    <div class="container">
+        <div class="header">
+            <img src="{{ url_for('static', filename='images/banner.png') }}" alt="CryptoAI Banner">
+        </div>
+
+        <div class="qa">
+            <h3>Requirements and Test Status</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Title</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for req in requirements %}
+                        <tr>
+                            <td>{{ req.id }}</td>
+                            <td>{{ req.title }}</td>
+                            <td>{{ req.description }}</td>
+                            <td>{{ req.status }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

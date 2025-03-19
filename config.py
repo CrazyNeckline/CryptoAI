@@ -15,8 +15,8 @@ BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET')
 # File path for persisting trade history
 TRADE_HISTORY_FILE = 'trade_history.json'
 
-# Timezone for displaying dates (CET)
-LOCAL_TZ = pytz.timezone('Europe/Berlin')
+# Timezone for displaying dates (CET) - should be a string
+LOCAL_TZ = 'Europe/Berlin'  # Changed from pytz.timezone('Europe/Berlin')
 
 # Initial balance for the trading account
 INITIAL_BALANCE = 10000

@@ -1,74 +1,131 @@
-# models.py
-# This file handles the training and prediction of machine learning models for trading signals.
+# CryptoAI/models.py
+# This file contains functions to train machine learning models for the CryptoAI application.
 
-import pandas as np
+import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import train_test_split
 
 def train_models(df):
     """
-    Train RandomForest models for direction, stop-loss (SL), and take-profit (TP) predictions for each timeframe.
+    Train machine learning models for each timeframe.
     
     Args:
-        df (dict): Dictionary of DataFrames for each timeframe ('1m', '1h', '1d') with historical data.
+        df (dict): Dictionary of DataFrames for each timeframe.
     
     Returns:
-        dict: Dictionary of trained models for each timeframe, with keys 'direction', 'sl', and 'tp'.
+        dict: Dictionary of trained models for each timeframe.
     """
     models = {}
     for timeframe in ['1m', '1h', '1d']:
-        # Prepare features and target for direction prediction
-        X = df[timeframe][['Open', 'High', 'Low', 'Close', 'Volume', 'SMA_20', 'RSI', 'ATR']]
-        y_direction = np.where(df[timeframe]['Close'].shift(-1) > df[timeframe]['Close'], 1, 0)[:-1]
-        X = X[:-1]
-        X_train, X_test, y_dir_train, y_dir_test = train_test_split(X, y_direction, test_size=0.2, shuffle=False)
-        X_train_sl, X_test_sl = X_train, X_test
+        print(f"Training models for {timeframe}...")
+        data = df[timeframe].copy()
         
-        # Prepare targets for SL and TP regression
-        y_sl_train = np.abs(X_train['Close'] - X_train['Low']) * (0.5 if timeframe == '1m' else 2 if timeframe == '1h' else 5)
-        y_tp_train = np.abs(X_train['High'] - X_train['Close']) * (0.5 if timeframe == '1m' else 2 if timeframe == '1h' else 5)
-
+        # Calculate indicators
+        data['SMA_20'] = data['Close'].rolling(window=20).mean()
+        data['RSI'] = compute_rsi(data['Close'], 14)
+        data['ATR'] = compute_atr(data, 14)
+        
+        # Create target variables
+        # Direction: 1 for Long (price increases), -1 for Short (price decreases), 0 for no trade
+        data['Future_Close'] = data['Close'].shift(-5)
+        data['Direction'] = 0
+        # Lower threshold to 0.3% to increase likelihood of signals
+        data.loc[data['Future_Close'] > data['Close'] * 1.003, 'Direction'] = 1  # Long if price increases by 0.3%
+        data.loc[data['Future_Close'] < data['Close'] * 0.997, 'Direction'] = -1  # Short if price decreases by 0.3%
+        
+        # SL and TP (in dollars, based on ATR)
+        data['SL'] = data['ATR'] * 2  # Example: SL is 2x ATR
+        data['TP'] = data['ATR'] * 3  # Example: TP is 3x ATR
+        
+        # Drop rows with NaN values
+        data = data.dropna()
+        print(f"Data for {timeframe} after preprocessing: {len(data)} rows")
+        print(f"Direction distribution for {timeframe}: {data['Direction'].value_counts().to_dict()}")
+        
+        if len(data) < 50:  # Ensure enough data for training
+            print(f"Not enough data for {timeframe} to train models.")
+            models[timeframe] = {'direction': None, 'sl': None, 'tp': None}
+            continue
+        
+        # Features and targets
+        features = data[['SMA_20', 'RSI', 'ATR']]
+        direction_target = data['Direction']
+        sl_target = data['SL']
+        tp_target = data['TP']
+        
+        # Split data
+        X_train, X_test, y_train_direction, y_test_direction = train_test_split(features, direction_target, test_size=0.2, random_state=42)
+        _, _, y_train_sl, y_test_sl = train_test_split(features, sl_target, test_size=0.2, random_state=42)
+        _, _, y_train_tp, y_test_tp = train_test_split(features, tp_target, test_size=0.2, random_state=42)
+        
         # Train direction model (classification)
         print(f"Training direction model for {timeframe}...")
-        models[timeframe] = {'direction': RandomForestClassifier(n_estimators=100, random_state=42)}
-        models[timeframe]['direction'].fit(X_train, y_dir_train)
+        direction_model = RandomForestClassifier(n_estimators=100, random_state=42)
+        direction_model.fit(X_train, y_train_direction)
+        direction_score = direction_model.score(X_test, y_test_direction)
+        print(f"Direction model score for {timeframe}: {direction_score}")
+        # Log some predictions to understand model behavior
+        sample_predictions = direction_model.predict(X_test[:5])
+        sample_proba = direction_model.predict_proba(X_test[:5])
+        print(f"Sample predictions for {timeframe}: {sample_predictions}")
+        print(f"Sample probabilities for {timeframe} ([-1, 0, 1]): {sample_proba}")
         
         # Train SL model (regression)
         print(f"Training SL model for {timeframe}...")
-        models[timeframe]['sl'] = RandomForestRegressor(n_estimators=100, random_state=42)
-        models[timeframe]['sl'].fit(X_train_sl, y_sl_train)
+        sl_model = RandomForestRegressor(n_estimators=100, random_state=42)
+        sl_model.fit(X_train, y_train_sl)
+        sl_score = sl_model.score(X_test, y_test_sl)
+        print(f"SL model score for {timeframe}: {sl_score}")
         
         # Train TP model (regression)
         print(f"Training TP model for {timeframe}...")
-        models[timeframe]['tp'] = RandomForestRegressor(n_estimators=100, random_state=42)
-        models[timeframe]['tp'].fit(X_train_sl, y_tp_train)
+        tp_model = RandomForestRegressor(n_estimators=100, random_state=42)
+        tp_model.fit(X_train, y_train_tp)
+        tp_score = tp_model.score(X_test, y_test_tp)
+        print(f"TP model score for {timeframe}: {tp_score}")
+        
+        models[timeframe] = {
+            'direction': direction_model,
+            'sl': sl_model,
+            'tp': tp_model
+        }
     
     print("Training complete!")
     return models
 
-def predict_signal(models, timeframe, latest):
+def compute_rsi(data, periods=14):
     """
-    Predict trading signal, stop-loss, and take-profit using trained models for a given timeframe.
+    Compute the Relative Strength Index (RSI) for a given data series.
     
     Args:
-        models (dict): Dictionary of trained models for each timeframe.
-        timeframe (str): Timeframe identifier ('1m', '1h', '1d').
-        latest (pd.Series): Latest candle data with features for prediction.
+        data (pd.Series): Series of closing prices.
+        periods (int): Number of periods for RSI calculation.
     
     Returns:
-        tuple: (signal, entry_price, sl_price, tp_price)
-            - signal (str): 'Long' or 'Short'.
-            - entry_price (float): Entry price for the trade.
-            - sl_price (float): Stop-loss price.
-            - tp_price (float): Take-profit price.
+        pd.Series: RSI values.
     """
-    features = ['Open', 'High', 'Low', 'Close', 'Volume', 'SMA_20', 'RSI', 'ATR']
-    X = latest[features].values.reshape(1, -1)
-    signal = 'Long' if models[timeframe]['direction'].predict_proba(X)[0][1] > 0.55 else 'Short'  # Tighter signal threshold
-    sl_distance = models[timeframe]['sl'].predict(X)[0]  # Scaled by timeframe in training
-    tp_distance = models[timeframe]['tp'].predict(X)[0]  # Scaled by timeframe in training
-    entry_price = latest['Close']
-    sl_price = round(entry_price - sl_distance if signal == 'Long' else entry_price + sl_distance, 2)
-    tp_price = round(entry_price + tp_distance if signal == 'Long' else entry_price - tp_distance, 2)
-    return signal, entry_price, sl_price, tp_price
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def compute_atr(df, periods=14):
+    """
+    Compute the Average True Range (ATR) for a given DataFrame.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with High, Low, and Close columns.
+        periods (int): Number of periods for ATR calculation.
+    
+    Returns:
+        pd.Series: ATR values.
+    """
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = true_range.rolling(window=periods).mean()
+    return atr

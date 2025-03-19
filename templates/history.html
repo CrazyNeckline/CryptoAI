@@ -3,190 +3,126 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trade History</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        nav { background-color: #333; padding: 10px; margin-bottom: 20px; }
-        nav a { color: white; margin-right: 20px; text-decoration: none; }
-        nav a:hover { text-decoration: underline; }
-        .banner { width: 100%; height: 100px; overflow: hidden; margin-bottom: 20px; }
-        .banner img { width: 100%; height: auto; object-fit: cover; }
-        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
-        .summary { flex: 0 0 auto; min-width: 450px; margin-right: 20px; } /* Increased width to prevent wrapping */
-        #chart-container { width: 90%; height: 300px; margin-left: auto; } /* Extended width, align right */
-        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        tr:hover { cursor: pointer; background-color: #f5f5f5; }
-        .stats { margin-bottom: 20px; }
-        .positive { color: green; }
-        .negative { color: red; }
-        .highlight { background-color: #ffcc99; }
-        .completed { color: #808080; }
-        .open { color: #ff0000; }
-        .details { background-color: #f9f9f9; padding: 10px; }
-        .type-long { color: green; }
-        .type-short { color: red; }
-    </style>
+    <title>CryptoAI Trade History</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="nav-header">
+        <a href="/">Dashboard</a>
+        <a href="/history" class="active">History</a>
+        <a href="/qa">QA</a>
+    </div>
+    <div class="container">
+        <div class="header">
+            <img src="{{ url_for('static', filename='images/banner.png') }}" alt="CryptoAI Banner">
+        </div>
+
+        <div class="btc-price">
+            <h3>Current BTC Price</h3>
+            <span id="btc-price">{{ btc_price }}</span>
+            <span id="btc-change">{{ btc_change }}</span>
+        </div>
+
+        <div class="stats">
+            <h3>Trading Statistics</h3>
+            <p>Balance: {{ balance }}</p>
+            <p>Profit: <span style="color: {{ profit_color }}">{{ profit }}</span> ({{ profit_pct }})</p>
+            <p>Total Win %: {{ stats.total_win_pct|round(2) }}% ({{ stats.total_trades }} trades)</p>
+            <p>Short Win %: {{ stats.short_win_pct|round(2) }}% ({{ stats.short_trades }} trades)</p>
+            <p>Long Win %: {{ stats.long_win_pct|round(2) }}% ({{ stats.long_trades }} trades)</p>
+            <p>Short Profit: <span style="color: {{ stats.short_profit_color }}">{{ stats.short_profit_str }}</span></p>
+            <p>Long Profit: <span style="color: {{ stats.long_profit_color }}">{{ stats.long_profit_str }}</span></p>
+        </div>
+
+        <div class="trades">
+            <h3>All Trades</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Trade ID</th>
+                        <th>Type</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>Result</th>
+                        <th>Profit</th>
+                        <th>Balance</th>
+                        <th>Entry Time</th>
+                        <th>Exit Time</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                        <tr class="trade-row" data-trade-id="{{ trade.trade_id }}" {% if trade.is_new %}class="new-trade"{% endif %}>
+                            <td><a href="#" class="trade-link">{{ trade.trade_id }}</a></td>
+                            <td>{{ trade.type }}</td>
+                            <td>{{ trade.entry_str }}</td>
+                            <td>{{ trade.exit_str }}</td>
+                            <td>{{ trade.result|round(2) ~ '%' if trade.result else '-' }}</td>
+                            <td>{{ trade.profit_str }}</td>
+                            <td>{{ trade.balance_str }}</td>
+                            <td>{{ trade.entry_datetime }}</td>
+                            <td>{{ trade.exit_datetime if trade.exit_datetime else '-' }}</td>
+                            <td>{{ trade.duration if trade.duration else '-' }}</td>
+                            <td>{{ trade.status }}</td>
+                        </tr>
+                        <tr class="trade-details" id="details-{{ trade.trade_id }}" style="display: none;">
+                            <td colspan="11">
+                                <div class="details-content">
+                                    <p>Stop Loss: {{ trade.sl_str }}</p>
+                                    <p>Take Profit: {{ trade.tp_str }}</p>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="chart">
+            <h3>Balance Over Time</h3>
+            <canvas id="balance-chart"></canvas>
+        </div>
+    </div>
+
     <script>
-        let openDetailId = null;
-        let chart = null;
-
-        function toggleDetails(tradeId, row) {
-            console.log('Toggling details for trade ID:', tradeId);
-            const existingDetails = document.getElementById(`details-${tradeId}`);
-            if (existingDetails && openDetailId === tradeId) {
-                existingDetails.remove();
-                openDetailId = null;
-                return;
-            }
-            if (openDetailId && openDetailId !== tradeId) {
-                const prevDetails = document.getElementById(`details-${openDetailId}`);
-                if (prevDetails) prevDetails.remove();
-            }
-            openDetailId = tradeId;
-            fetch(`/trade_details/${tradeId}`)
-                .then(response => {
-                    if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-                    return response.json();
-                })
-                .then(data => {
-                    console.log('Trade details response:', data);
-                    const detailsRow = document.createElement('tr');
-                    detailsRow.id = `details-${tradeId}`;
-                    detailsRow.classList.add('details');
-                    detailsRow.innerHTML = `
-                        <td colspan="11">
-                            <strong>Stop Loss:</strong> ${data.stop_loss ? formatDollar(data.stop_loss) : '-'}<br>
-                            <strong>Take Profit:</strong> ${data.take_profit ? formatDollar(data.take_profit) : '-'}<br>
-                            <strong>Indicators on Trigger:</strong><br>
-                            SMA_20: ${data.indicators.SMA_20 ? data.indicators.SMA_20.toFixed(2) : '-'}<br>
-                            RSI: ${data.indicators.RSI ? data.indicators.RSI.toFixed(2) : '-'}<br>
-                            ATR: ${data.indicators.ATR ? data.indicators.ATR.toFixed(2) : '-'}
-                        </td>
-                    `;
-                    row.insertAdjacentElement('afterend', detailsRow);
+        // Add click event listeners to trade links
+        document.querySelectorAll('.trade-link').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const tradeId = link.parentElement.parentElement.dataset.tradeId;
+                const detailsRow = document.getElementById(`details-${tradeId}`);
+                if (detailsRow.style.display === 'none') {
                     detailsRow.style.display = 'table-row';
-                })
-                .catch(error => console.error('Error fetching trade details:', error));
-        }
-
-        function formatDollar(num) {
-            const [whole, decimal] = num.toFixed(2).split('.');
-            return whole.replace(/\B(?=(\d{3})+(?!\d))/g, "'") + '.' + decimal;
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const rows = document.querySelectorAll('#trades-table tbody tr');
-            rows.forEach(row => {
-                const tradeId = parseInt(row.cells[0].innerText);
-                if (row.cells[10].classList.contains('open')) row.classList.add('highlight');
-                row.addEventListener('click', () => toggleDetails(tradeId, row));
-            });
-
-            // Draw Chart in Header
-            const chartData = {{ chart_data|safe }};
-            const tradeIds = Array.from({length: chartData.labels.length}, (_, i) => i + 1); // Start from Trade 1
-            const labels = tradeIds.map((id, index) => (id % 50 === 0 || id === 1 || id === tradeIds[tradeIds.length - 1]) ? `Trade ${id}` : '');
-            // Calculate min and max balance for Y-axis scaling
-            const balances = chartData.balances;
-            const minBalance = Math.min(...balances);
-            const maxBalance = Math.max(...balances);
-            const buffer = (maxBalance - minBalance) * 0.1; // 10% buffer
-            const ctx = document.getElementById('balanceChart').getContext('2d');
-            chart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Balance History',
-                        data: chartData.balances,
-                        borderColor: 'orange',  // Orange line
-                        backgroundColor: 'black',  // Black dots
-                        borderWidth: 1,
-                        fill: false,
-                        pointRadius: 3,
-                        pointStyle: 'circle'
-                    }]
-                },
-                options: {
-                    scales: {
-                        x: { 
-                            display: true,
-                            title: { display: true, text: 'Trade ID' }
-                        },
-                        y: { 
-                            title: { display: true, text: 'Balance ($)' },
-                            suggestedMin: minBalance - buffer,
-                            suggestedMax: maxBalance + buffer
-                        }
-                    },
-                    plugins: {
-                        legend: { display: false }
-                    }
+                } else {
+                    detailsRow.style.display = 'none';
                 }
             });
         });
+
+        // Initialize chart
+        let ctx = document.getElementById('balance-chart').getContext('2d');
+        let balanceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: {{ chart_data.labels|safe }},
+                datasets: [{
+                    label: 'Balance Over Time',
+                    data: {{ chart_data.balances|safe }},
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 1,
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    x: { title: { display: true, text: 'Trade Exit Time' } },
+                    y: { title: { display: true, text: 'Balance ($)' } }
+                }
+            }
+        });
     </script>
-</head>
-<body>
-    <div class="banner">
-        <img src="{{ url_for('static', filename='images/banner.png') }}" alt="Banner">
-    </div>
-    <nav>
-        <a href="/">Dashboard</a>
-        <a href="/history">History</a>
-    </nav>
-    <h1>Trade History</h1>
-    <div class="header">
-        <div class="summary">
-            <div class="stats">
-                Total Win %: {{ stats.total_win_pct|round(2) }}% ({{ stats.total_trades }} trades)<br>
-                Short Win %: {{ stats.short_win_pct|round(2) }}% ({{ stats.short_trades }} trades)<br>
-                Long Win %: {{ stats.long_win_pct|round(2) }}% ({{ stats.long_trades }} trades)
-            </div>
-            <p><strong>Balance:</strong> {{ balance }} | <strong>Total Profit:</strong> <span class="{% if profit|float >= 0 %}positive{% else %}negative{% endif %}">{{ profit }}</span> | <strong>Profit %:</strong> <span class="{% if profit_pct|float >= 0 %}positive{% else %}negative{% endif %}">{{ profit_pct }}</span></p>
-            <p><strong>Short Profit:</strong> {{ stats.short_profit|round(2)|string|replace('.', ',')|replace(',', '.', 1)|replace(',', "'") }} | <strong>Long Profit:</strong> {{ stats.long_profit|round(2)|string|replace('.', ',')|replace(',', '.', 1)|replace(',', "'") }}</p>
-            <p><strong>Current BTC Price:</strong> {{ btc_price }} <span class="{% if btc_change|float >= 0 %}positive{% else %}negative{% endif %}">{{ btc_change }}</span></p>
-        </div>
-        <div id="chart-container">
-            <canvas id="balanceChart"></canvas>
-        </div>
-    </div>
-    <table id="trades-table">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Type</th>
-                <th>Entry</th>
-                <th>Exit</th>
-                <th>Profit %</th>
-                <th>Profit $</th>
-                <th>Balance</th>
-                <th>Timeframe</th>
-                <th>Entry Time</th>
-                <th>Exit Time</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for trade in trades %}
-            <tr class="{{ 'highlight' if trade.status == 'Open' else '' }}">
-                <td>{{ trade.trade_id }}</td>
-                <td class="type-{{ trade.type|lower }}">{{ trade.type }}</td>
-                <td>{{ trade.entry|round(2)|string|replace('.', ',')|replace(',', '.', 1)|replace(',', "'") }}</td>
-                <td>{{ trade.exit|round(2)|string|replace('.', ',')|replace(',', '.', 1)|replace(',', "'") if trade.exit else '-' }}</td>
-                <td class="{% if trade.result > 0 %}positive{% else %}negative{% endif %}">{{ trade.result|round(2) }} %</td>
-                <td class="{% if trade.profit > 0 %}positive{% else %}negative{% endif %}">{{ trade.profit|round(2)|string|replace('.', ',')|replace(',', '.', 1)|replace(',', "'") }}</td>
-                <td>{{ trade.balance|round(2)|string|replace('.', ',')|replace(',', '.', 1)|replace(',', "'") }}</td>
-                <td>{{ trade.timeframe }}</td>
-                <td>{{ trade.entry_datetime }}</td>
-                <td>{{ trade.exit_datetime or '-' }}</td>
-                <td class="{% if trade.status == 'Completed' %}completed{% else %}open{% endif %}">{{ trade.status }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
 </body>
 </html>

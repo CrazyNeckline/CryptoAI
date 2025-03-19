@@ -3,142 +3,198 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Dashboard</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        nav { background-color: #333; padding: 10px; margin-bottom: 20px; }
-        nav a { color: white; margin-right: 20px; text-decoration: none; }
-        nav a:hover { text-decoration: underline; }
-        .banner { width: 100%; height: 100px; overflow: hidden; margin-bottom: 20px; }
-        .banner img { width: 100%; height: auto; object-fit: cover; }
-        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
-        .summary { flex: 0 0 auto; min-width: 450px; margin-right: 20px; } /* Increased width to prevent wrapping */
-        #chart-container { width: 90%; height: 300px; margin-left: auto; } /* Extended width, align right */
-        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        tr:hover { cursor: pointer; background-color: #f5f5f5; }
-        .prediction { margin-bottom: 20px; }
-        .stats { margin-bottom: 20px; }
-        .positive { color: green; }
-        .negative { color: red; }
-        .highlight { background-color: #ffcc99; }
-        .completed { color: #808080; }
-        .open { color: #ff0000; }
-        .details { background-color: #f9f9f9; padding: 10px; }
-        .type-long { color: green; }
-        .type-short { color: red; }
-    </style>
+    <title>CryptoAI Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
-        let lastMaxTradeId = 0;
-        let openDetailId = null;
-        let chart = null;
+</head>
+<body>
+    <div class="nav-header">
+        <a href="/" class="active">Dashboard</a>
+        <a href="/history">History</a>
+        <a href="/qa">QA</a>
+    </div>
+    <div class="container">
+        <div class="header">
+            <img src="{{ url_for('static', filename='images/banner.png') }}" alt="CryptoAI Banner">
+        </div>
 
+        <div class="btc-price">
+            <h3>Current BTC Price</h3>
+            <span id="btc-price">{{ btc_price }}</span>
+            <span id="btc-change">{{ btc_change }}</span>
+        </div>
+
+        <div class="stats">
+            <h3>Trading Statistics</h3>
+            <p>Balance: <span id="balance">{{ balance }}</span></p>
+            <p>Profit: <span id="profit" style="color: {{ profit_color }}">{{ profit }}</span> (<span id="profit-pct">{{ profit_pct }}</span>)</p>
+            <p>Total Win %: {{ stats.total_win_pct|round(2) }}% ({{ stats.total_trades }} trades)</p>
+            <p>Short Win %: {{ stats.short_win_pct|round(2) }}% ({{ stats.short_trades }} trades)</p>
+            <p>Long Win %: {{ stats.long_win_pct|round(2) }}% ({{ stats.long_trades }} trades)</p>
+            <p>Short Profit: <span style="color: {{ stats.short_profit_color }}">{{ stats.short_profit_str }}</span></p>
+            <p>Long Profit: <span style="color: {{ stats.long_profit_color }}">{{ stats.long_profit_str }}</span></p>
+        </div>
+
+        <div class="predictions" id="predictions">
+            <h3>Model Predictions</h3>
+            {% for timeframe, pred in prediction.items() %}
+                {% if pred.signal %}
+                    <p>{{ timeframe }} Prediction: {{ pred.signal }} at {{ pred.entry }}, SL: {{ pred.sl }}, TP: {{ pred.tp }} ({{ pred.datetime }})</p>
+                {% endif %}
+            {% endfor %}
+        </div>
+
+        <div class="trades">
+            <h3>Recent Trades</h3>
+            <table id="trades-table">
+                <thead>
+                    <tr>
+                        <th>Trade ID</th>
+                        <th>Type</th>
+                        <th>Entry</th>
+                        <th>Exit</th>
+                        <th>Result</th>
+                        <th>Profit</th>
+                        <th>Balance</th>
+                        <th>Entry Time</th>
+                        <th>Exit Time</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in trades %}
+                        <tr class="trade-row" data-trade-id="{{ trade.trade_id }}" {% if trade.is_new %}class="new-trade"{% endif %}>
+                            <td><a href="#" class="trade-link">{{ trade.trade_id }}</a></td>
+                            <td>{{ trade.type }}</td>
+                            <td>{{ trade.entry_str }}</td>
+                            <td>{{ trade.exit_str }}</td>
+                            <td>{{ trade.result|round(2) ~ '%' if trade.result else '-' }}</td>
+                            <td>{{ trade.profit_str }}</td>
+                            <td>{{ trade.balance_str }}</td>
+                            <td>{{ trade.entry_datetime }}</td>
+                            <td>{{ trade.exit_datetime if trade.exit_datetime else '-' }}</td>
+                            <td>{{ trade.duration if trade.duration else '-' }}</td>
+                            <td>{{ trade.status }}</td>
+                        </tr>
+                        <tr class="trade-details" id="details-{{ trade.trade_id }}" style="display: none;">
+                            <td colspan="11">
+                                <div class="details-content">
+                                    <p>Stop Loss: {{ trade.sl_str }}</p>
+                                    <p>Take Profit: {{ trade.tp_str }}</p>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="chart">
+            <h3>Balance Over Time</h3>
+            <canvas id="balance-chart"></canvas>
+        </div>
+    </div>
+
+    <script>
         function updateDashboard() {
             fetch('/trades')
                 .then(response => response.json())
                 .then(data => {
-                    console.log('Fetched trades:', data.trades);
-                    // Update Prediction
-                    const predDiv = document.getElementById('prediction');
-                    predDiv.innerHTML = '';
+                    // Update BTC price
+                    document.getElementById('btc-price').innerHTML = data.btc_price;
+                    document.getElementById('btc-change').innerHTML = data.btc_change;
+
+                    // Update predictions
+                    let predictionDiv = document.getElementById('predictions');
+                    let predictionHtml = '<h3>Model Predictions</h3>';
                     for (let timeframe in data.prediction) {
-                        if (data.prediction[timeframe].signal) {
-                            predDiv.innerHTML += `<div><strong>${timeframe} Prediction:</strong> ${data.prediction[timeframe].signal} at ${data.prediction[timeframe].entry}, SL: ${data.prediction[timeframe].sl}, TP: ${data.prediction[timeframe].tp} (${data.prediction[timeframe].datetime})</div>`;
+                        let pred = data.prediction[timeframe];
+                        if (pred.signal) {
+                            predictionHtml += `<p>${timeframe} Prediction: ${pred.signal} at ${pred.entry}, SL: ${pred.sl}, TP: ${pred.tp} (${pred.datetime})</p>`;
                         }
                     }
-                    if (!predDiv.innerHTML) predDiv.innerHTML = '<strong>No current prediction</strong>';
+                    predictionDiv.innerHTML = predictionHtml;
 
-                    // Update Summary (Stats + Profits)
-                    const statsDiv = document.getElementById('stats');
-                    statsDiv.innerHTML = `
-                        Total Win %: ${data.stats.total_win_pct.toFixed(2)}% (${data.stats.total_trades} trades)<br>
-                        Short Win %: ${data.stats.short_win_pct.toFixed(2)}% (${data.stats.short_trades} trades)<br>
-                        Long Win %: ${data.stats.long_win_pct.toFixed(2)}% (${data.stats.long_trades} trades)
-                    `;
-                    document.getElementById('balance').innerText = data.balance;
-                    document.getElementById('profit').innerText = data.profit;
-                    document.getElementById('profit').className = parseFloat(data.profit) >= 0 ? 'positive' : 'negative';
-                    document.getElementById('profit_pct').className = parseFloat(data.profit_pct) >= 0 ? 'positive' : 'negative';
-                    document.getElementById('profit_pct').innerText = data.profit_pct;
-                    document.getElementById('short_profit').innerText = formatDollar(data.stats.short_profit);
-                    document.getElementById('long_profit').innerText = formatDollar(data.stats.long_profit);
-                    document.getElementById('btc_price').innerText = data.btc_price;
-                    document.getElementById('btc_change').innerText = data.btc_change;
-                    document.getElementById('btc_change').className = parseFloat(data.btc_change) >= 0 ? 'positive' : 'negative';
-
-                    // Update Trades Table (20 Newest, sorted by trade_id descending)
-                    const tbody = document.querySelector('#trades-table tbody');
-                    const currentMaxTradeId = Math.max(...data.trades.map(t => t.trade_id), 0);
-                    tbody.innerHTML = '';
+                    // Update trades table
+                    let tradesTable = document.getElementById('trades-table').getElementsByTagName('tbody')[0];
+                    tradesTable.innerHTML = '';
                     data.trades.forEach(trade => {
-                        const tr = document.createElement('tr');
-                        if (trade.status === 'Open') tr.classList.add('highlight');
-                        tr.innerHTML = `
-                            <td>${trade.trade_id}</td>
-                            <td class="type-${trade.type.toLowerCase()}">${trade.type}</td>
-                            <td>${formatDollar(trade.entry)}</td>
-                            <td>${trade.exit ? formatDollar(trade.exit) : '-'}</td>
-                            <td class="${trade.result > 0 ? 'positive' : 'negative'}">${trade.result.toFixed(2)} %</td>
-                            <td class="${trade.profit > 0 ? 'positive' : 'negative'}">${formatDollar(trade.profit)}</td>
-                            <td>${formatDollar(trade.balance)}</td>
-                            <td>${trade.timeframe}</td>
-                            <td>${trade.entry_datetime}</td>
-                            <td>${trade.exit_datetime || '-'}</td>
-                            <td class="${trade.status === 'Completed' ? 'completed' : 'open'}">${trade.status}</td>
-                        `;
-                        tr.addEventListener('click', () => toggleDetails(trade.trade_id, tr));
-                        tbody.appendChild(tr);
-
-                        // Restore open details if previously clicked
-                        if (trade.trade_id === openDetailId) {
-                            toggleDetails(trade.trade_id, tr);
+                        let row = tradesTable.insertRow();
+                        row.className = 'trade-row';
+                        row.dataset.tradeId = trade.trade_id;
+                        if (trade.is_new) {
+                            row.classList.add('new-trade'); // Highlight new trades
                         }
-                    });
-                    lastMaxTradeId = currentMaxTradeId;
+                        row.insertCell(0).innerHTML = `<a href="#" class="trade-link">${trade.trade_id}</a>`;
+                        row.insertCell(1).innerHTML = trade.type;
+                        row.insertCell(2).innerHTML = trade.entry_str;
+                        row.insertCell(3).innerHTML = trade.exit_str;
+                        row.insertCell(4).innerHTML = trade.result ? trade.result.toFixed(2) + '%' : '-';
+                        row.insertCell(5).innerHTML = trade.profit_str;
+                        row.insertCell(6).innerHTML = trade.balance_str;
+                        row.insertCell(7).innerHTML = trade.entry_datetime;
+                        row.insertCell(8).innerHTML = trade.exit_datetime || '-';
+                        row.insertCell(9).innerHTML = trade.duration || '-';
+                        row.insertCell(10).innerHTML = trade.status;
 
-                    // Update Chart in Header only if new data
-                    if (data.update_chart || !chart) {
-                        if (chart) chart.destroy();
-                        const ctx = document.getElementById('balanceChart').getContext('2d');
-                        // Generate X-axis labels with trade IDs (interval of 50)
-                        const tradeIds = Array.from({length: data.chart_data.labels.length}, (_, i) => i + 1); // Start from Trade 1
-                        const labels = tradeIds.map((id, index) => (id % 50 === 0 || id === 1 || id === tradeIds[tradeIds.length - 1]) ? `Trade ${id}` : '');
-                        // Calculate min and max balance for Y-axis scaling
-                        const balances = data.chart_data.balances;
-                        const minBalance = Math.min(...balances);
-                        const maxBalance = Math.max(...balances);
-                        const buffer = (maxBalance - minBalance) * 0.1; // 10% buffer
-                        chart = new Chart(ctx, {
+                        // Add details row
+                        let detailsRow = tradesTable.insertRow();
+                        detailsRow.className = 'trade-details';
+                        detailsRow.id = `details-${trade.trade_id}`;
+                        detailsRow.style.display = 'none';
+                        let detailsCell = detailsRow.insertCell(0);
+                        detailsCell.colSpan = 11;
+                        detailsCell.innerHTML = `
+                            <div class="details-content">
+                                <p>Stop Loss: ${trade.sl_str}</p>
+                                <p>Take Profit: ${trade.tp_str}</p>
+                            </div>
+                        `;
+                    });
+
+                    // Add click event listeners to trade links
+                    document.querySelectorAll('.trade-link').forEach(link => {
+                        link.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            const tradeId = link.parentElement.parentElement.dataset.tradeId;
+                            const detailsRow = document.getElementById(`details-${tradeId}`);
+                            if (detailsRow.style.display === 'none') {
+                                detailsRow.style.display = 'table-row';
+                            } else {
+                                detailsRow.style.display = 'none';
+                            }
+                        });
+                    });
+
+                    // Update stats
+                    document.getElementById('balance').innerHTML = data.balance;
+                    document.getElementById('profit').innerHTML = data.profit;
+                    document.getElementById('profit').style.color = data.profit_color;
+                    document.getElementById('profit-pct').innerHTML = data.profit_pct;
+
+                    // Update chart if needed
+                    if (data.update_chart) {
+                        let ctx = document.getElementById('balance-chart').getContext('2d');
+                        if (window.balanceChart) {
+                            window.balanceChart.destroy();
+                        }
+                        window.balanceChart = new Chart(ctx, {
                             type: 'line',
                             data: {
-                                labels: labels,
+                                labels: data.chart_data.labels,
                                 datasets: [{
-                                    label: 'Balance History',
-                                    data: balances,
-                                    borderColor: 'orange',  // Orange line
-                                    backgroundColor: 'black',  // Black dots
+                                    label: 'Balance Over Time',
+                                    data: data.chart_data.balances,
+                                    borderColor: 'rgba(75, 192, 192, 1)',
                                     borderWidth: 1,
-                                    fill: false,
-                                    pointRadius: 3,
-                                    pointStyle: 'circle'
+                                    fill: false
                                 }]
                             },
                             options: {
                                 scales: {
-                                    x: { 
-                                        display: true,
-                                        title: { display: true, text: 'Trade ID' }
-                                    },
-                                    y: { 
-                                        title: { display: true, text: 'Balance ($)' },
-                                        suggestedMin: minBalance - buffer,
-                                        suggestedMax: maxBalance + buffer
-                                    }
-                                },
-                                plugins: {
-                                    legend: { display: false }
+                                    x: { title: { display: true, text: 'Trade Exit Time' } },
+                                    y: { title: { display: true, text: 'Balance ($)' } }
                                 }
                             }
                         });
@@ -147,94 +203,11 @@
                 .catch(error => console.error('Error updating dashboard:', error));
         }
 
-        function toggleDetails(tradeId, row) {
-            console.log('Toggling details for trade ID:', tradeId);
-            const existingDetails = document.getElementById(`details-${tradeId}`);
-            if (existingDetails && openDetailId === tradeId) {
-                existingDetails.remove();
-                openDetailId = null;
-                return;
-            }
-            if (openDetailId && openDetailId !== tradeId) {
-                const prevDetails = document.getElementById(`details-${openDetailId}`);
-                if (prevDetails) prevDetails.remove();
-            }
-            openDetailId = tradeId;
-            fetch(`/trade_details/${tradeId}`)
-                .then(response => {
-                    if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-                    return response.json();
-                })
-                .then(data => {
-                    console.log('Trade details response:', data);
-                    const detailsRow = document.createElement('tr');
-                    detailsRow.id = `details-${tradeId}`;
-                    detailsRow.classList.add('details');
-                    detailsRow.innerHTML = `
-                        <td colspan="11">
-                            <strong>Stop Loss:</strong> ${data.stop_loss ? formatDollar(data.stop_loss) : '-'}<br>
-                            <strong>Take Profit:</strong> ${data.take_profit ? formatDollar(data.take_profit) : '-'}<br>
-                            <strong>Indicators on Trigger:</strong><br>
-                            SMA_20: ${data.indicators.SMA_20 ? data.indicators.SMA_20.toFixed(2) : '-'}<br>
-                            RSI: ${data.indicators.RSI ? data.indicators.RSI.toFixed(2) : '-'}<br>
-                            ATR: ${data.indicators.ATR ? data.indicators.ATR.toFixed(2) : '-'}
-                        </td>
-                    `;
-                    row.insertAdjacentElement('afterend', detailsRow);
-                    detailsRow.style.display = 'table-row';
-                })
-                .catch(error => console.error('Error fetching trade details:', error));
-        }
-
-        function formatDollar(num) {
-            const [whole, decimal] = num.toFixed(2).split('.');
-            return whole.replace(/\B(?=(\d{3})+(?!\d))/g, "'") + '.' + decimal;
-        }
-
-        // Initial load
-        window.onload = updateDashboard;
-
-        // Poll every 5 seconds
+        // Update dashboard every 5 seconds
         setInterval(updateDashboard, 5000);
+
+        // Initial update
+        updateDashboard();
     </script>
-</head>
-<body>
-    <div class="banner">
-        <img src="{{ url_for('static', filename='images/banner.png') }}" alt="Banner">
-    </div>
-    <nav>
-        <a href="/">Dashboard</a>
-        <a href="/history">History</a>
-    </nav>
-    <div class="header">
-        <div class="summary">
-            <div class="prediction" id="prediction"><strong>No current prediction</strong></div>
-            <div class="stats" id="stats"></div>
-            <p><strong>Balance:</strong> <span id="balance"></span> | <strong>Total Profit:</strong> <span id="profit"></span> | <strong>Profit %:</strong> <span id="profit_pct"></span></p>
-            <p><strong>Short Profit:</strong> <span id="short_profit"></span> | <strong>Long Profit:</strong> <span id="long_profit"></span></p>
-            <p><strong>Current BTC Price:</strong> <span id="btc_price"></span> <span id="btc_change"></span></p>
-        </div>
-        <div id="chart-container">
-            <canvas id="balanceChart"></canvas>
-        </div>
-    </div>
-    <table id="trades-table">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Type</th>
-                <th>Entry</th>
-                <th>Exit</th>
-                <th>Profit %</th>
-                <th>Profit $</th>
-                <th>Balance</th>
-                <th>Timeframe</th>
-                <th>Entry Time</th>
-                <th>Exit Time</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody></tbody>
-    </table>
 </body>
 </html>
