@@ -101,3 +101,13 @@ def save_trade_history(trade_history_file, trade_history):
         print(f"Saved {len(trade_history)} trades to {trade_history_file}")
     except Exception as e:
         print(f"Error saving {trade_history_file}: {e}")
+
+def load_trade_history(trade_history_file, trade_history, trade_number):
+    """Load trade history from a JSON file."""
+    if os.path.exists(trade_history_file):
+        with open(trade_history_file, 'r') as f:
+            trade_history.extend(json.load(f))
+            if trade_history:
+                trade_number = max(trade['trade_id'] for trade in trade_history)
+        print(f"Loaded {len(trade_history)} historic trades from {trade_history_file}, max trade_id: {trade_number}")
+    return trade_history, trade_number

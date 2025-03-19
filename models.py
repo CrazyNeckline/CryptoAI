@@ -1,6 +1,7 @@
 # models.py
 # This file handles the training and prediction of machine learning models for trading signals.
 
+import pandas as np
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import train_test_split

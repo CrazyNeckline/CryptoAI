@@ -405,9 +405,32 @@ if __name__ == '__main__':
     # Start WebSocket for multiple timeframes
     twm = ThreadedWebsocketManager(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET)
     twm.start()
-    twm.start_kline_socket(callback=lambda msg: process_kline(msg, '1m', models, df, current_prediction, indicators_at_entry, TRADE_HISTORY_FILE, LOCAL_TZ), symbol='BTCUSDT', interval='1m')
-    twm.start_kline_socket(callback=lambda msg: process_kline(msg, '1h', models, df, current_prediction, indicators_at_entry, TRADE_HISTORY_FILE, LOCAL_TZ), symbol='BTCUSDT', interval='1h')
-    twm.start_kline_socket(callback=lambda msg: process_kline(msg, '1d', models, df, current_prediction, indicators_at_entry, TRADE_HISTORY_FILE, LOCAL_TZ), symbol='BTCUSDT', interval='1d')
+
+    # Function to start a WebSocket stream with retry and error handling
+    def start_kline_socket_with_retry(twm, timeframe, interval, max_attempts=5, delay=5):
+        for attempt in range(max_attempts):
+            try:
+                twm.start_kline_socket(
+                    callback=lambda msg: process_kline(msg, timeframe, models, df, current_prediction, indicators_at_entry, TRADE_HISTORY_FILE, LOCAL_TZ),
+                    symbol='BTCUSDT',
+                    interval=interval
+                )
+                print(f"Started {timeframe} WebSocket stream")
+                return True
+            except Exception as e:
+                print(f"Failed to start {timeframe} WebSocket stream (attempt {attempt + 1}/{max_attempts}): {e}")
+                if attempt < max_attempts - 1:
+                    print(f"Retrying in {delay} seconds...")
+                    import time
+                    time.sleep(delay)
+                else:
+                    print(f"Failed to start {timeframe} WebSocket stream after {max_attempts} attempts")
+                    return False
+
+    # Start WebSocket streams for each timeframe
+    start_kline_socket_with_retry(twm, '1m', '1m')
+    start_kline_socket_with_retry(twm, '1h', '1h')
+    start_kline_socket_with_retry(twm, '1d', '1d')
 
     print(f"\nInitial Balance: ${format_number(balance)}")
     print("Starting Flask server...")
